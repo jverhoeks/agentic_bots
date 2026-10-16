@@ -1,0 +1,23 @@
+[project]
+name = "connectors"
+version = "0.1.0"
+description = "MCP connectors (hackernews, web) served behind agentgateway"
+authors = [
+    { name = "Jacob Verhoeks", email = "jacob.verhoeks@gmail.com" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "ddgs>=9.16.0",
+    "httpx>=0.28.1",
+    "mcp[cli]>=2.3.0",
+    "starlette>=1.7.0",
+    "trafilatura>=2.3.1",
+    "uvicorn>=0.54.0",
+]
+
+[project.scripts]
+connectors = "connectors.app:main"
+
+[build-system]
+requires = ["uv_build>=0.11.7,<0.13.0"]
+build-backend = "uv_build"

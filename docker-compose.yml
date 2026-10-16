@@ -1,0 +1,31 @@
+# Tool plane: agentgateway (MCP gateway / tools registry) + internal connectors.
+# The app and the UI run on the host (`make dev`) and reach the gateway on :3000.
+services:
+  connectors:
+    build: ./connectors
+    environment:
+      WEB_SEARCH_PROVIDER: ${WEB_SEARCH_PROVIDER:-duckduckgo}
+      TAVILY_API_KEY: ${TAVILY_API_KEY:-}
+      BRAVE_API_KEY: ${BRAVE_API_KEY:-}
+      SEARXNG_URL: ${SEARXNG_URL:-}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8100/health')"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+  agentgateway:
+    image: cr.agentgateway.dev/agentgateway:v1.6.0
+    command: ["-f", "/config/config.yaml"]
+    environment:
+      ADMIN_ADDR: 0.0.0.0:15000   # gateway UI at http://localhost:15000/ui (local dev only)
+    volumes:
+      - ./gateway:/config:ro
+    ports:
+      - "3000:3000"
+      - "127.0.0.1:15000:15000"
+    depends_on:
+      connectors:
+        condition: service_healthy
+    restart: unless-stopped

@@ -1,0 +1,34 @@
+# yaml-language-server: $schema=https://agentgateway.dev/schema/config
+#
+# agentgateway: the single tools registry / MCP gateway for all bots.
+# Every target below is multiplexed behind http://localhost:3000/mcp and its tools are
+# prefixed with "<target name>_" (e.g. hackernews_hn_top_stories).
+#
+# Adding a connector = adding a target. Note: one failing target fails `initialize`
+# for the whole multiplexed backend, so keep targets healthy (or comment them out).
+mcp:
+  port: 3000
+  policies:
+    cors:
+      allowOrigins: ["*"]
+      allowHeaders: ["*"]
+      exposeHeaders: ["Mcp-Session-Id", "Mcp-Protocol-Version"]
+    # Multi-tenancy (next step): validate a per-run JWT and scope tools per bot/tenant.
+    # jwtAuth:
+    #   issuer: agentic-bots
+    #   audiences: [agentgateway]
+    #   jwks: { file: /config/jwks.json }
+    # mcpAuthorization:
+    #   rules:
+    #   - 'mcp.tool.name in jwt.allowed_tools'
+  targets:
+  - name: hackernews
+    mcp:
+      host: http://connectors:8100/hackernews/mcp
+  - name: web
+    mcp:
+      host: http://connectors:8100/web/mcp
+  # Third-party servers plug in the same way, e.g.:
+  # - name: github
+  #   mcp:
+  #     host: https://api.githubcopilot.com/mcp/

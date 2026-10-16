@@ -1,0 +1,39 @@
+[project]
+name = "app"
+version = "0.1.0"
+description = "Agentic bots: chat-configured bots on pydantic-ai, LiteLLM and agentgateway"
+authors = [
+    { name = "Jacob Verhoeks", email = "jacob.verhoeks@gmail.com" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.143.0",
+    "httpx>=0.28.1",
+    "pydantic-ai-slim[mcp,openai]>=2.54.0",
+    "pydantic-settings>=2.15.0",
+    "pyyaml>=6.0.3",
+    "sqlmodel>=0.0.48",
+    "sse-starlette>=3.5.0",
+    "uvicorn[standard]>=0.54.0",
+]
+
+[project.scripts]
+app = "app.main:run"
+
+[build-system]
+requires = ["uv_build>=0.11.7,<0.13.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+    "pytest-asyncio>=1.4.0",
+]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+markers = [
+    "network: needs internet / running gateway",
+    "e2e: full journey against the real LiteLLM + gateway (run with `make e2e`)",
+]
+addopts = "-m 'not e2e'"
