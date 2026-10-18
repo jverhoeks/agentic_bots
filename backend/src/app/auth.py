@@ -29,6 +29,7 @@ USER_RE = r"^[a-z0-9]+(-[a-z0-9]+)*$"  # also the connection name in open-connec
 current_user: ContextVar[str | None] = ContextVar("current_user", default=None)
 
 router = APIRouter(prefix="/api/auth")
+CONNECTIONS_TTL = 15 * 60
 
 
 def _secret() -> bytes:
@@ -210,6 +211,18 @@ def token(request: Request):
     audit.record("auth.token_issued", user=user, detail={"ttl": 12 * 3600})
     return {"token": tokens.issue(user, ttl=12 * 3600), "expires_in": 12 * 3600,
             "mcp": "http://localhost:3000/mcp", "a2a": "http://localhost:3000/a2a/<bot>/"}
+
+
+@router.post("/connections-token")
+def connections_token(request: Request):
+    """A short token for the Connections page: the browser sends it to the apps broker (through the UI
+    proxy, not this backend), so API keys typed there never reach the app."""
+    from app import tokens
+
+    user = read_cookie(request.cookies.get(COOKIE))
+    if not user:
+        raise HTTPException(401, "not logged in")
+    return {"token": tokens.issue(user, ttl=CONNECTIONS_TTL, audience=tokens.CONNECTIONS), "expires_in": CONNECTIONS_TTL}
 
 
 @router.post("/logout")

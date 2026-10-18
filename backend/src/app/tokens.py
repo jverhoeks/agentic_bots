@@ -22,6 +22,7 @@ from cryptography.hazmat.primitives.asymmetric import ec
 from app.config import get_settings
 
 AUDIENCE = "agentgateway"
+CONNECTIONS = "connections"  # the apps broker's Connections API (the browser's Connections page)
 KID = "bots-1"
 SHARED = "shared"  # subject for bots without an owner: no personal connections
 TTL = 2 * 3600  # a run builds its toolsets once, so this bounds the longest run
@@ -68,10 +69,11 @@ def _private_key():
     return _key_cache[path]
 
 
-def issue(user: str | None, bot: str | None = None, ttl: int = TTL, tools: list[str] | None = None) -> str:
+def issue(user: str | None, bot: str | None = None, ttl: int = TTL, tools: list[str] | None = None,
+          audience: str = AUDIENCE) -> str:
     """`tools`: the gateway tools this token may list and call (a bot's allowed-tools); None = all."""
     now = int(time.time())
-    claims = {"iss": get_settings().jwt_issuer, "aud": AUDIENCE, "sub": user or SHARED, "iat": now, "exp": now + ttl}
+    claims = {"iss": get_settings().jwt_issuer, "aud": audience, "sub": user or SHARED, "iat": now, "exp": now + ttl}
     if bot:
         claims["bot"] = bot
     if tools is not None:

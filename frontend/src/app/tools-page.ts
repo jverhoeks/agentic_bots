@@ -15,7 +15,7 @@ import { Api, ToolInfo } from './api';
             <span class="pill">builder: {{ m.builder }}</span>
             <span class="pill">default bot model: {{ m.default }}</span>
             @if (m.error) { <span class="pill err">models: {{ m.error }}</span> }
-            @else { <span class="pill">{{ m.models.length }} models via LiteLLM</span> }
+            @else { <span class="pill">{{ m.models.length }} models</span> }
           </div>
         }
       </div>

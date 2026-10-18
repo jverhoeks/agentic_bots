@@ -52,6 +52,21 @@ async def test_tampered_cookie_is_rejected(client):
     assert (await client.get("/api/bots")).status_code == 401
 
 
+async def test_connections_token_names_the_user_for_the_apps_broker_only(client):
+    import jwt
+
+    from app import tokens
+
+    assert (await client.post("/api/auth/connections-token")).status_code == 401
+    await _register(client, "alice")
+    t = (await client.post("/api/auth/connections-token")).json()["token"]
+    pub = tokens._private_key().public_key()
+    claims = jwt.decode(t, pub, algorithms=["ES256"], audience=tokens.CONNECTIONS)
+    assert claims["sub"] == "alice" and claims["exp"] - claims["iat"] <= 15 * 60
+    with pytest.raises(jwt.InvalidAudienceError):  # not usable at the gateway
+        tokens.verify(t)
+
+
 def _bot(name: str, owner: str | None, tools: list[str] | None = None) -> spec.BotSpec:
     return spec.save_bot(spec.BotSpec(name=name, title=name, description="d", instructions="# Goal\nDo the task well.",
                                       model="test-model", tools=tools or [], owner=owner))

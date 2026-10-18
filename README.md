@@ -188,7 +188,7 @@ Angular :4200 ──REST/SSE──▶ FastAPI :8000 ──▶ pydantic-ai ──
                         (or PostgreSQL)    agentgateway :3000/mcp, /a2a   (admin UI :15000/ui)
                                              ├─ hackernews → connectors :8100/hackernews/mcp
                                              ├─ web        → connectors :8100/web/mcp
-                                             └─ apps       → open-connector :3010 (per-user SaaS)
+                                             └─ apps       → apps-broker :8120 → open-connector (per-user SaaS)
 gateway ──OTLP──▶ backend /otlp ──▶ traces in the app DB (+ an OTLP collector when set)
 ```
 
@@ -214,7 +214,7 @@ The database stores runtime data only: sessions, messages, agent history, runs, 
 backend/     FastAPI + pydantic-ai     src/app/{main,config,llm,gateway,spec,models,db,events,history}.py
                                        src/app/{auth,oidc,tokens,admin,audit,guardrails,telemetry,tracestore,memory,scheduler,a2a_server}.py
              agents/{builder,builder_tools,bot_runner,runtime,a2a}.py, tests/
-connectors/  MCP servers (one container) src/connectors/{hackernews,web,search_providers,app}.py
+connectors/  MCP servers (one container) src/connectors/{hackernews,web,search_providers,app,apps_broker}.py
 gateway/     agentgateway config
 config/      mcp.json (points the app at the gateway), a2a-agents.json
 bots/        SKILL.md bot definitions (git-ignored)
@@ -231,7 +231,7 @@ agentgateway combines all its targets behind one endpoint. Tool names get the ta
 |---|---|---|
 | `hackernews` | `hn_top_stories`, `hn_item` | Algolia HN API, no key |
 | `web` | `web_search`, `fetch_url` | pluggable search provider; fetches public pages only |
-| `apps` | search, read the guide of, and execute SaaS actions | Gmail, GitHub, Slack, ... via open-connector, per user |
+| `apps` | search, read the guide of, and execute SaaS actions | Gmail, GitHub, Slack, ... via the apps broker and open-connector, per user; no tools until you connect an account |
 | `a2a` (in the app) | talk to other bots and agents | see [A2A](#agent-to-agent-a2a) |
 
 ### Adding a connector
@@ -261,17 +261,25 @@ Set `WEB_SEARCH_PROVIDER` in `secrets/connectors.env`, then apply it with `docke
 
 ### SaaS apps (Gmail, GitHub, Slack, ...) via open-connector
 
-[open-connector](https://github.com/oomol-lab/open-connector) (Apache-2.0) runs as the `apps` target. Per user:
+[open-connector](https://github.com/oomol-lab/open-connector) (Apache-2.0) holds the SaaS accounts. A small **apps broker** (`connectors/src/connectors/apps_broker.py`) sits in front of it and is the `apps` target. The broker is the only thing that holds the open-connector admin token.
 
-1. `make up`. The first time, this generates `secrets/open-connector.env`.
-2. Open the console at http://localhost:3010 and sign in with `OOMOL_CONNECT_ADMIN_TOKEN` from that file.
-3. Connect a provider and use your **login username** as the **connection name**. Google needs your own OAuth client, with redirect URI `http://localhost:3010/oauth/callback`.
-4. Run `make connector-user USER_ID=<username>` to issue that user's token.
-   - The token can use only that user's connections, and by default only read-only Gmail actions.
-   - It is stored in `secrets/gateway.env`, which only agentgateway reads.
-5. Grant `apps` to a bot.
+**Users connect their own accounts on the Connections page** (sidebar, "⇄ Connections"):
 
-The app never sees a connector secret. It sends a JWT for the bot owner, and the gateway maps the verified `sub` to that user's token. See [docs/plan-a2a-connectors.md](docs/plan-a2a-connectors.md) §4.1.
+1. Search one of the ~1,600 apps and connect it with an API key or credentials, or with "Sign in with ..." (OAuth).
+   - API keys go from the browser straight to the broker (`/connections/api`, proxied by the UI server). The backend only issues a 15-minute token that names the user (`POST /api/auth/connections-token`).
+   - open-connector checks the credentials with the provider on save.
+2. Grant `apps` to a bot. A user without connections sees no `apps` tools at all.
+3. Disconnect on the same page. That revokes the user's runtime token.
+
+How it works:
+
+- The connection name is the user's login name. For each user the broker keeps an open-connector **runtime token** that may use **only that user's connections**. The tokens live in the broker's own volume (`apps-broker-data`).
+- On `/mcp` the broker checks the gateway's JWT, then forwards the call with that user's runtime token. The app and the gateway never see a SaaS token.
+- Actions are limited by `APPS_ALLOWED_ACTIONS` and `APPS_BLOCKED_ACTIONS` in `secrets/apps-broker.env`. By default the Gmail actions that send, reply, change filters or vacation settings, trash or delete are blocked.
+- **OAuth needs an admin once per provider.** The admin sets up the OAuth client (e.g. Google, redirect URI `http://localhost:3010/oauth/callback`) in the open-connector console at http://localhost:3010, signing in with `OOMOL_CONNECT_ADMIN_TOKEN` from `secrets/open-connector.env`. Admins get a "Connector console" link on the Connections page. Until then the page offers the API-key option where the provider has one.
+- `make connector-init` (part of `make up`) generates `secrets/open-connector.env` and `secrets/apps-broker.env`. No restart is needed when users connect.
+
+See [docs/plan-a2a-connectors.md](docs/plan-a2a-connectors.md) §4.1.
 
 ## Users and identity
 
@@ -292,7 +300,7 @@ The app never sees a connector secret. It sends a JWT for the bot owner, and the
   - **Who:** `sub` is the **bot owner**, also for background and bot-to-bot runs.
   - **What:** a `tools` claim lists the tools the bot may use.
   - **Checked by the gateway:** agentgateway rejects requests without a valid token (`jwtAuth: strict`).
-  - **Per-user tokens:** the gateway sets `X-User-Id` from the verified `sub`, which picks the user's open-connector token. A client cannot pick another user by sending that header itself.
+  - **Per-user SaaS access:** the gateway forwards the verified token to the apps broker, which checks it again and uses that user's own open-connector token. A client cannot pick another user.
   - **Keys:** `make jwt-init` creates `secrets/jwt-private.pem` (read by the backend only) and `secrets/jwks.json` (read by the gateway only).
 - **External MCP/A2A clients** (Claude, goose, another agent) need a token:
   - Get one with `make token USER_ID=<name>` (valid 12h), or `POST /api/auth/token` while logged in.
@@ -347,7 +355,7 @@ The **Admin** page (for admins) has:
 - **Secrets split by container.**
   - Model keys live in `.env`, which only the app reads.
   - Connector keys live in `secrets/connectors.env`, which only the connectors read.
-  - SaaS tokens live in `secrets/gateway.env`, which only the gateway reads.
+  - The open-connector admin token and the per-user runtime tokens are held by the apps broker only (`secrets/apps-broker.env` and its volume).
   - Passwords and keys are generated at random once (`make secrets-init`, `make jwt-init`, `make connector-init`) and never overwritten.
 - **Localhost only.** The Docker UI is bound to `127.0.0.1:8080`.
 - **Approval.** Granting a tool that writes or sends is the approval to use it. A per-action approval queue is not planned yet; see [docs/plan-a2a-connectors.md](docs/plan-a2a-connectors.md) §7.
@@ -395,7 +403,8 @@ The generated `SKILL.md`, digest and follow-up answer are saved in `data/e2e/`. 
 
 - **Multi-tenant gateway.**
   - Done: per-user JWTs with per-bot tool scoping, rate limits and OIDC login.
-  - Next: a Connections page that drives open-connector for the user, and LLM traffic through an agentgateway `ai` route (prompt guards, token budgets per user).
+  - Done: a Connections page where users connect their own SaaS accounts through the apps broker.
+  - Next: LLM traffic through an agentgateway `ai` route (prompt guards, token budgets per user).
 - **Scheduling.** Now a simple cron loop in the backend (one process). Later: a job queue or Temporal, for several replicas, retries and catch-up.
 - **Memory.** TTL and compaction, then full-text search over past runs.
 - **Connectors and approvals.** A2A layer 2, Gmail and others, and an approval queue; see [docs/plan-a2a-connectors.md](docs/plan-a2a-connectors.md).

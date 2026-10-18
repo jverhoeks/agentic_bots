@@ -22,7 +22,6 @@ services:
       ADMIN_ADDR: 0.0.0.0:15000   # gateway UI at http://localhost:15000/ui (local dev only)
       A2A_BACKEND: ${A2A_BACKEND:-backend:8000}   # `make up` (app on the host) sets host.docker.internal:8000
     env_file:
-      - secrets/gateway.env   # OOMOL_USER_TOKENS: per-user open-connector tokens (`make connector-user`)
       - secrets/trace-ingest.env   # TRACE_INGEST_TOKEN: sent with its spans to the backend (`make jwt-init`)
     volumes:
       - ./gateway:/config:ro
@@ -35,6 +34,31 @@ services:
     depends_on:
       connectors:
         condition: service_healthy
+      apps-broker:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # The `apps` MCP target and the Connections page API: the only holder of the open-connector admin
+  # token and of each user's runtime token (connectors/src/connectors/apps_broker.py).
+  apps-broker:
+    build: ./connectors
+    command: ["/app/.venv/bin/apps-broker"]
+    env_file:
+      # OOMOL_CONNECT_ADMIN_TOKEN (`make connector-init`); optional APPS_ALLOWED_ACTIONS / APPS_BLOCKED_ACTIONS
+      - secrets/apps-broker.env
+    environment:
+      OPEN_CONNECTOR_URL: http://open-connector:3000
+    volumes:
+      - ./secrets/jwks.json:/secrets/jwks.json:ro   # public key only: verifies the users' tokens
+      - apps-broker-data:/data                      # per-user runtime tokens
+    ports:
+      - "127.0.0.1:8120:8120"   # Connections API for `make dev` (the Angular proxy); /mcp needs a token too
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8120/health')"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    depends_on:
       open-connector:
         condition: service_started
     restart: unless-stopped
@@ -106,4 +130,5 @@ services:
 
 volumes:
   connector-data:
+  apps-broker-data:
   postgres-data:

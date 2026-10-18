@@ -6,7 +6,7 @@ export interface Streaming {
   tools: ToolCall[];
 }
 
-export type View = { kind: 'session'; id: string } | { kind: 'tools' } | { kind: 'admin' };
+export type View = { kind: 'session'; id: string } | { kind: 'tools' } | { kind: 'connections' } | { kind: 'admin' };
 
 const TUTORIAL_KEY = 'tutorial-step';
 
@@ -87,7 +87,7 @@ export class Store {
     this.es = this.api.events((e) => this.onEvent(e));
     const hash = location.hash.slice(1);
     const known = this.sessions().some((s) => s.id === hash);
-    const page = hash === 'tools' || (hash === 'admin' && this.user()?.role === 'admin') ? hash : null;
+    const page = hash === 'tools' || hash === 'connections' || (hash === 'admin' && this.user()?.role === 'admin') ? hash : null;
     await this.open(page ? { kind: page } : { kind: 'session', id: known ? hash : this.mainId() });
   }
 

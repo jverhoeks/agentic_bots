@@ -7,12 +7,13 @@
 #   (Agent Card: /a2a/<bot>/.well-known/agent-card.json), proxied to the backend.
 #
 # Adding a connector = adding a target. `failureMode: failOpen` keeps the other targets
-# serving when one is down or rejects the caller (e.g. `apps` for a user without a token).
+# serving when one is down or rejects the caller.
 #
 # Identity: every request needs a JWT signed by the backend (app/tokens.py, `make jwt-init`):
 # `sub` = the user whose connections are used (the bot owner, or "shared"). The gateway checks it
 # here, for /mcp and /a2a alike, and overwrites X-User-Id with `sub`, so a client cannot claim
-# another user. External clients get a token with `make token USER_ID=<user>`.
+# another user. The token is passed on (preserveToken), so the apps broker and /a2a check it again.
+# External clients get a token with `make token USER_ID=<user>`.
 # Observability: every request is traced and access-logged with the verified user and bot. Chat turns
 # and bot runs start the trace in the backend, so one trace shows the turn, its LLM calls and the tool
 # calls through this gateway (Admin > Traces in the app).
@@ -48,7 +49,7 @@ gateways:
       issuer: agentic-bots
       audiences: [agentgateway]
       jwks: { file: /secrets/jwks.json }
-      preserveToken: true  # the backend's /a2a checks the token again (it is also reachable directly)
+      preserveToken: true  # the apps broker and the backend's /a2a check the token again
     transformations:
       request:
         set:
@@ -82,17 +83,12 @@ mcp:  # served on the default gateway at /mcp
       host: http://connectors:8100/web/mcp
   # SaaS connectors via open-connector (Gmail, GitHub, Slack, ...), as meta-tools:
   # apps_list_connections, apps_search_actions, apps_get_action_guide, apps_execute_action.
-  # Per user: the gateway picks that user's open-connector runtime token, which only grants the
-  # user's own connections. X-User-Id here is the verified `jwt.sub` (set at the gateway above).
-  # An unknown user gets no token, so open-connector rejects it: no fallback to an unrestricted token.
+  # Through the apps broker: it verifies the caller's token (forwarded, preserveToken) and calls
+  # open-connector with that user's runtime token, which grants only the user's own connections.
+  # A user without connections gets no tools. Users connect apps on the Connections page of the app.
   - name: apps
     mcp:
-      host: http://open-connector:3000/mcp
-    policies:
-      transformations:  # v1.6.0: backendAuth takes only static keys, so set the header with CEL
-        request:
-          set:
-            authorization: '"Bearer " + ${OOMOL_USER_TOKENS}[request.headers["x-user-id"]]'
+      host: http://apps-broker:8120/mcp
   # Third-party servers plug in the same way, e.g.:
   # - name: github
   #   mcp:

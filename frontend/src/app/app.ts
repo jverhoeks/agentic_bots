@@ -5,6 +5,7 @@ import { AdminPage } from './admin-page';
 import { Login } from './login';
 import { Store } from './store';
 import { ToolsPage } from './tools-page';
+import { ConnectionsPage } from './connections-page';
 import { TraceView } from './trace-view';
 import { Tutorial } from './tutorial';
 import { MarkdownPipe } from './markdown.pipe';
@@ -12,7 +13,7 @@ import { ago } from './util';
 
 @Component({
   selector: 'app-root',
-  imports: [Chat, BotPanel, ToolsPage, Login, AdminPage, TraceView, Tutorial, MarkdownPipe],
+  imports: [Chat, BotPanel, ToolsPage, ConnectionsPage, Login, AdminPage, TraceView, Tutorial, MarkdownPipe],
   template: `
     @if (store.user() === null) {
       <app-login />
@@ -51,6 +52,9 @@ import { ago } from './util';
       <button class="nav" [class.active]="store.view().kind === 'tools'" (click)="store.open({ kind: 'tools' })">
         <span class="nav-icon">⚙</span><span class="nav-text"><b>Tools</b><small>MCP gateway catalog</small></span>
       </button>
+      <button class="nav" [class.active]="store.view().kind === 'connections'" (click)="store.open({ kind: 'connections' })">
+        <span class="nav-icon">⇄</span><span class="nav-text"><b>Connections</b><small>Your Gmail, GitHub, Slack…</small></span>
+      </button>
       @if (user.role === 'admin') {
         <button class="nav" [class.active]="store.view().kind === 'admin'" (click)="store.open({ kind: 'admin' })">
           <span class="nav-icon">◎</span><span class="nav-text"><b>Admin</b><small>Activity, runs, users</small></span>
@@ -72,6 +76,8 @@ import { ago } from './util';
       }
       @if (store.view().kind === 'tools') {
         <app-tools-page />
+      } @else if (store.view().kind === 'connections') {
+        <app-connections-page />
       } @else if (store.view().kind === 'admin') {
         <app-admin-page />
       } @else if (sessionId(); as sid) {

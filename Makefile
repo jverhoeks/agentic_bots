@@ -2,7 +2,7 @@
 NODE_BIN := $(firstword $(wildcard /opt/homebrew/opt/node@24/bin /usr/local/opt/node@24/bin))
 export PATH := $(if $(NODE_BIN),$(NODE_BIN):,)$(PATH)
 
-.PHONY: secrets-init up up-all down gateway-check logs jwt-init token user admin connector-init connector-user install dev backend frontend test test-all e2e smoke llm-smoke build
+.PHONY: secrets-init up up-all down gateway-check logs jwt-init token user admin connector-init install dev backend frontend test test-all e2e smoke llm-smoke build
 
 up: secrets-init jwt-init connector-init   ## start agentgateway + connectors (A2A route -> backend on the host)
 	A2A_BACKEND=host.docker.internal:8000 docker compose up -d --build
@@ -35,6 +35,7 @@ dev:           ## backend + frontend together (Ctrl-C stops both)
 
 test:          ## unit tests (no network)
 	cd backend && uv run pytest -m "not network and not e2e"
+	cd connectors && uv run pytest -q tests
 
 test-all:      ## includes live gateway tests (needs `make up`)
 	cd backend && uv run pytest -m "not e2e"
@@ -59,12 +60,11 @@ secrets-init:     ## generate secrets/postgres.env (random password) and secrets
 	@test -f secrets/postgres.env || (umask 077 && printf 'POSTGRES_PASSWORD=%s\n' "$$(openssl rand -hex 24)" > secrets/postgres.env && echo "wrote secrets/postgres.env")
 	@test -f secrets/connectors.env || (umask 077 && cp connectors/connectors.env.example secrets/connectors.env && echo "wrote secrets/connectors.env")
 
-connector-init:   ## generate open-connector secrets (once; never overwrites)
+connector-init:   ## generate open-connector and apps-broker secrets (once; never overwrites)
 	@python3 scripts/open_connector.py init
 
-connector-user:   ## per-user open-connector token: make connector-user USER_ID=<login username>
-	python3 scripts/open_connector.py user $(USER_ID)
-	docker compose up -d agentgateway
+connector-user:   ## (removed) users connect their apps on the Connections page
+	@echo "Users connect their apps on the Connections page of the app; the apps broker issues their tokens."
 
 smoke:         ## list tools through the gateway (as USER_ID, default the shared subject)
 	MCP_TOKEN=$$(cd backend && uv run python -m app.tokens token $(or $(USER_ID),shared)) \
