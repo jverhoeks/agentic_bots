@@ -157,3 +157,8 @@ def test_mcp_forwards_with_the_users_token_or_serves_no_tools(oc):
     c.post("/connections/api/connections/github", headers=api("alice"), json={"authType": "api_key", "values": {"apiKey": "k"}})
     assert c.post("/mcp", json=call, headers=gw).json()["result"]["tools"] == [{"name": "search_actions"}]
     assert oc.mcp_auth == ["Bearer secret-t1"]  # the user's runtime token, never the admin token
+
+    # a discovery probe is answered here as "method not found", never forwarded (open-connector says HTTP 400)
+    probe = c.post("/mcp", json={"jsonrpc": "2.0", "id": 2, "method": "server/discover"}, headers=gw)
+    assert probe.status_code == 200 and probe.json()["error"]["code"] == -32601
+    assert oc.mcp_auth == ["Bearer secret-t1"]

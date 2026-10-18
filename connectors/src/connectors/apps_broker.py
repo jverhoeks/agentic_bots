@@ -201,6 +201,10 @@ async def _revoke(token_id: str) -> None:
 
 # --- MCP: the gateway's `apps` target --------------------------------------------------------------
 
+# newer MCP clients probe with `server/discover` before falling back to `initialize`
+LOCAL_ONLY = {"server/discover"}
+
+
 def _local_reply(msg: dict) -> dict | None:
     """MCP answers for a user without connections: a valid server with no tools."""
     if "id" not in msg:
@@ -230,15 +234,18 @@ async def mcp(request: Request) -> Response:
         return JSONResponse({"error": str(e)}, status_code=401)
     body = await request.body()
     try:
+        msg = json.loads(body)
+    except ValueError:
+        return JSONResponse({"error": "invalid JSON"}, status_code=400)
+    if isinstance(msg, dict) and msg.get("method") in LOCAL_ONLY and "id" in msg:
+        # open-connector answers methods it doesn't know with HTTP 400; reply like other MCP servers do
+        return JSONResponse({"jsonrpc": "2.0", "id": msg["id"], "error": {"code": -32601, "message": "Method not found"}})
+    try:
         token = await sync(user, force=False)
     except (OCError, httpx.HTTPError) as e:
         log.warning("sync for %s failed: %s", user, e)
         return JSONResponse({"error": "apps are unavailable"}, status_code=502)
     if not token:
-        try:
-            msg = json.loads(body)
-        except ValueError:
-            return JSONResponse({"error": "invalid JSON"}, status_code=400)
         replies = [r for r in map(_local_reply, msg if isinstance(msg, list) else [msg]) if r]
         if not replies:
             return Response(status_code=202)
