@@ -11,11 +11,12 @@ from pathlib import Path
 from typing import Literal
 
 import yaml
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from app.config import get_settings
 
 NAME_RE = r"^[a-z0-9]+(-[a-z0-9]+)*$"
+Verbosity = Literal["short", "medium", "verbose"]
 _FRONTMATTER = re.compile(r"\A---\s*\n(.*?)\n---\s*\n?(.*)\Z", re.S)
 
 
@@ -26,10 +27,28 @@ class BotSpec(BaseModel):
     instructions: str = Field(min_length=20)
     model: str
     tools: list[str] = []
-    trigger: Literal["manual"] = "manual"  # later: "cron" (+ metadata.schedule) | "event"
+    trigger: Literal["manual", "schedule"] = "manual"  # set from `schedule`; later also "event"
+    schedule: str | None = None  # cron expression (5 fields, SCHEDULE_TIMEZONE), e.g. "0 7 * * 1-5"
     max_steps: int = Field(25, ge=1, le=100)
+    verbosity: Verbosity = "short"  # how much the bot writes in its reports and answers
+    owner: str | None = None  # user id; runs use the owner's connector credentials. None = shared (legacy)
     created_at: str | None = None
     updated_at: str | None = None
+
+    @field_validator("schedule")
+    @classmethod
+    def _cron(cls, v: str | None) -> str | None:
+        from croniter import croniter
+
+        v = " ".join((v or "").split()) or None
+        if v and (len(v.split()) != 5 or not croniter.is_valid(v)):
+            raise ValueError(f"schedule must be a 5-field cron expression like '0 7 * * 1-5', not {v!r}")
+        return v
+
+    @model_validator(mode="after")
+    def _trigger(self) -> "BotSpec":
+        self.trigger = "schedule" if self.schedule else "manual"
+        return self
 
     @field_validator("tools")
     @classmethod
@@ -41,7 +60,10 @@ class BotSpec(BaseModel):
             "title": self.title,
             "model": self.model,
             "trigger": self.trigger,
+            "schedule": self.schedule or "",
             "max-steps": str(self.max_steps),
+            "verbosity": self.verbosity,
+            "owner": self.owner or "",
             "created-at": self.created_at or "",
             "updated-at": self.updated_at or "",
         }
@@ -67,8 +89,10 @@ class BotSpec(BaseModel):
             instructions=m.group(2).strip(),
             model=meta.get("model") or get_settings().default_bot_model,
             tools=(front.get("allowed-tools") or "").split(),
-            trigger=meta.get("trigger", "manual"),
+            schedule=meta.get("schedule") or None,
             max_steps=int(meta.get("max-steps", 25)),
+            verbosity=meta.get("verbosity") or "short",
+            owner=meta.get("owner") or None,
             created_at=meta.get("created-at"),
             updated_at=meta.get("updated-at"),
         )
@@ -80,7 +104,12 @@ def _path(name: str) -> Path:
     return get_settings().bots_dir / name / "SKILL.md"
 
 
-def list_bots() -> list[BotSpec]:
+def visible_to(bot: BotSpec, user: str | None) -> bool:
+    return bot.owner is None or bot.owner == user
+
+
+def list_bots(user: str | None = None) -> list[BotSpec]:
+    """All bots, or only those `user` may see (their own plus shared ones without an owner)."""
     root = get_settings().bots_dir
     specs = []
     for p in sorted(root.glob("*/SKILL.md")):
@@ -88,7 +117,7 @@ def list_bots() -> list[BotSpec]:
             specs.append(BotSpec.from_skill_md(p.read_text()))
         except Exception:
             continue  # skip broken files rather than break the listing
-    return specs
+    return specs if user is None else [b for b in specs if visible_to(b, user)]
 
 
 def get_bot(name: str) -> BotSpec | None:

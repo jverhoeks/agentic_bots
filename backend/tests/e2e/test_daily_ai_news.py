@@ -12,7 +12,7 @@ import re
 import pytest
 from sqlmodel import select
 
-from app import gateway, spec
+from app import auth, gateway, spec
 from app.agents import bot_runner, builder
 from app.config import ROOT, get_settings
 from app.db import db
@@ -27,10 +27,12 @@ UPDATE = ("Update the daily AI news bot: keep at most 5 top stories, and add a l
           "'*Why it matters for enterprises:*' to each story.")
 FOLLOW_UP = "Find broader coverage of the second story: search the web and summarise what other sources say."
 OUT = ROOT / "data" / "e2e"
+USER = "e2e"  # owner of the bot the builder creates
 
 
 async def say(gen) -> dict:
     """Drain an agent turn; return the final event plus the tool calls made."""
+    auth.current_user.set(USER)  # builder tools act as the logged-in user
     tools, last = [], {}
     async for ev in gen:
         if ev["type"] == "tool_call":
@@ -47,22 +49,22 @@ async def stack():
     try:
         await list_models()
     except Exception as e:
-        pytest.skip(f"LiteLLM not reachable at {get_settings().litellm_base_url} ({e}); check .env")
+        pytest.skip(f"no model provider reachable ({e}); check .env")
     try:
         await gateway.catalog(refresh=True)
     except Exception as e:
         pytest.skip(f"MCP gateway not reachable ({e}); run `make up`")
     with db() as s:
-        if not s.get(Session, builder.MAIN_SESSION):
-            s.add(Session(id=builder.MAIN_SESSION, kind="main", title="Main"))
+        if not s.get(Session, builder.main_session(USER)):
+            s.add(Session(id=builder.main_session(USER), kind="main", owner=USER, title="Main"))
             s.commit()
     OUT.mkdir(parents=True, exist_ok=True)
 
 
 async def test_builder_creates_bot_from_chat():
-    turn = await say(builder.chat(REQUEST))
+    turn = await say(builder.chat(USER, REQUEST))
     if not spec.list_bots():  # the builder may ask one round of questions first
-        turn = await say(builder.chat(NUDGE))
+        turn = await say(builder.chat(USER, NUDGE))
     assert turn["type"] == "done", turn
     bots = spec.list_bots()
     assert len(bots) == 1, f"expected one bot, builder said: {turn['message']['content']}"
@@ -107,7 +109,7 @@ async def test_follow_up_uses_web_tools():
 
 async def test_update_bot_by_prompt():
     before = spec.list_bots()[0]
-    turn = await say(builder.chat(UPDATE))
+    turn = await say(builder.chat(USER, UPDATE))
     assert turn["type"] == "done", turn
     assert "update_bot" in turn["tools"], turn["tools"]
     after = spec.get_bot(before.name)

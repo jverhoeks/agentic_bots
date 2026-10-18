@@ -4,8 +4,18 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai import ModelResponse, TextPart, ToolCallPart
 
 from app import gateway
+from app.config import ROOT, get_settings
 
 pytestmark = pytest.mark.network
+
+
+@pytest.fixture(autouse=True)
+def gateway_key(monkeypatch):
+    """The running gateway only trusts the real signing key (`make jwt-init`), not the throwaway test key."""
+    key = ROOT / "secrets" / "jwt-private.pem"
+    if not key.exists():
+        pytest.skip("no gateway signing key; run `make jwt-init`")
+    monkeypatch.setattr(get_settings(), "jwt_private_key", key)
 
 
 async def test_catalog_lists_connectors():

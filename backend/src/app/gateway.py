@@ -12,13 +12,15 @@ import time
 from typing import Any
 
 from mcp import Client
+from mcp.client.streamable_http import create_mcp_http_client, streamable_http_client
 from pydantic_ai.mcp import MCPToolset
 from pydantic_ai.toolsets import AbstractToolset
 
+from app import tokens
 from app.config import get_settings
 
 _ENV = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)(?::-([^}]*))?\}")
-_catalog_cache: tuple[float, list[dict]] | None = None
+_catalog_cache: dict[str | None, tuple[float, list[dict]]] = {}
 
 
 def _expand(value: Any) -> Any:
@@ -37,15 +39,27 @@ def servers() -> dict[str, dict]:
     return {name: cfg for name, cfg in data["mcpServers"].items() if cfg.get("url")}
 
 
-def toolsets(*, bot: str | None, allowed: list[str] | None) -> list[AbstractToolset]:
-    """MCP toolsets for an agent, limited to `allowed` tool names (None = all, [] = none)."""
+def _headers(cfg: dict, user: str | None, bot: str | None = None, tools: list[str] | None = None) -> dict[str, str]:
+    """Signed identity for the gateway: it maps `sub` to the user's connector credentials (`apps`)
+    and only lets the token list and call `tools` (the bot's allowed-tools), when given."""
+    headers = dict(cfg.get("headers") or {})
+    headers["Authorization"] = f"Bearer {tokens.issue(user, bot, tools=tools)}"
+    if bot:
+        headers["X-Bot-Id"] = bot  # for gateway logs; the token's `bot` claim is the trusted copy
+    return headers
+
+
+def toolsets(*, bot: str | None, allowed: list[str] | None, user: str | None = None) -> list[AbstractToolset]:
+    """MCP toolsets for an agent, limited to `allowed` tool names (None = all, [] = none).
+
+    `user` is the bot's owner, not the person watching: runs also happen in the background
+    (A2A, schedules), and they act with the owner's connections.
+    """
     if allowed == []:
         return []
     result: list[AbstractToolset] = []
     for name, cfg in servers().items():
-        headers = dict(cfg.get("headers") or {})
-        if bot:
-            headers["X-Bot-Id"] = bot  # identity for gateway logs now, authz (JWT) later
+        headers = _headers(cfg, user, bot, allowed)
         ts: AbstractToolset = MCPToolset(cfg["url"], id=name, headers=headers, max_retries=3)
         if allowed is not None:
             allow = set(allowed)
@@ -54,14 +68,15 @@ def toolsets(*, bot: str | None, allowed: list[str] | None) -> list[AbstractTool
     return result
 
 
-async def catalog(refresh: bool = False) -> list[dict]:
-    """All tools reachable through the gateway: name, connector, description, read-only hint."""
-    global _catalog_cache
-    if not refresh and _catalog_cache and time.monotonic() - _catalog_cache[0] < 60:
-        return _catalog_cache[1]
+async def catalog(refresh: bool = False, user: str | None = None) -> list[dict]:
+    """Tools reachable through the gateway for `user`: name, connector, description, read-only hint."""
+    cached = _catalog_cache.get(user)
+    if not refresh and cached and time.monotonic() - cached[0] < 60:
+        return cached[1]
     tools: list[dict] = []
     for name, cfg in servers().items():
-        async with Client(cfg["url"]) as client:
+        transport = streamable_http_client(cfg["url"], http_client=create_mcp_http_client(headers=_headers(cfg, user)))
+        async with Client(transport) as client:
             listed = await client.list_tools()
         for t in listed.tools:
             connector, _, short = t.name.partition("_")
@@ -74,7 +89,10 @@ async def catalog(refresh: bool = False) -> list[dict]:
                     "input_schema": t.input_schema,
                 }
             )
-    _catalog_cache = (time.monotonic(), tools)
+    from app.agents import a2a  # built-in connector, served in-process rather than via the gateway
+
+    tools.extend(a2a.catalog())
+    _catalog_cache[user] = (time.monotonic(), tools)
     return tools
 
 

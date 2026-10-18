@@ -1,0 +1,10 @@
+# root context is used by backend/Dockerfile; never ship secrets or local state
+.env
+secrets
+.git
+data
+bots
+**/.venv
+**/__pycache__
+frontend
+connectors

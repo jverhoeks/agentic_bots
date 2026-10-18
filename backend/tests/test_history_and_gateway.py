@@ -26,3 +26,25 @@ def test_expand_tool_refs():
     assert gateway.expand_tool_refs(["web", "hackernews_hn_item"], names) == [
         "web_web_search", "web_fetch_url", "hackernews_hn_item"]
     assert gateway.expand_tool_refs(["nope"], names) == []
+
+
+def test_allowed_models_ignores_inline_comment():
+    from app.config import Settings
+
+    assert Settings(allowed_models="# optional comma list; empty = all").allowed_model_list == []
+    assert Settings(allowed_models="a, b  # comment").allowed_model_list == ["a", "b"]
+
+
+def test_gateway_headers_carry_user_and_apps_rule_only_when_granted():
+    from app import gateway, spec, tokens
+    from app.agents import bot_runner
+
+    h = gateway._headers({"headers": {"X-A": "1"}}, "alice", "news-bot")
+    claims = tokens.verify(h["Authorization"].removeprefix("Bearer "))
+    assert h["X-A"] == "1" and claims["sub"] == "alice" and claims["bot"] == "news-bot"
+    # shared bots have no owner: a token for the shared subject, which has no personal connectors
+    assert tokens.verify(gateway._headers({}, None)["Authorization"][7:])["sub"] == tokens.SHARED
+    bot = spec.BotSpec(name="apps-bot", title="Apps", description="d", instructions="# Goal\nRead my inbox daily.",
+                       model="m", tools=["apps"])
+    assert "apps_list_connections" in bot_runner._apps_rule(bot)
+    assert bot_runner._apps_rule(bot.model_copy(update={"tools": ["web"]})) == ""

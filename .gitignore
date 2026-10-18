@@ -7,3 +7,7 @@ node_modules/
 frontend/dist/
 frontend/.angular/
 .DS_Store
+secrets/
+# bots are user data (written by the builder from chat), like data/: never in this repo
+bots/*
+!bots/.gitkeep

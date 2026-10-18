@@ -7,11 +7,20 @@ authors = [
 ]
 requires-python = ">=3.12"
 dependencies = [
+    "croniter>=6.2.4",
+    "fasta2a>=2.1.1",
     "fastapi>=0.143.0",
     "httpx>=0.28.1",
-    "pydantic-ai-slim[mcp,openai]>=2.54.0",
+    "opentelemetry-exporter-otlp-proto-http>=1.45.1",
+    "opentelemetry-instrumentation-fastapi>=0.66b1",
+    "opentelemetry-instrumentation-httpx>=0.66b1",
+    "opentelemetry-sdk>=1.45.1",
+    "psycopg[binary]>=3.3.6",
+    "pydantic-ai-slim[anthropic,mcp,openai]>=2.54.0",
     "pydantic-settings>=2.15.0",
+    "pyjwt[crypto]>=2.15",
     "pyyaml>=6.0.3",
+    "requests>=2.34.2",
     "sqlmodel>=0.0.48",
     "sse-starlette>=3.5.0",
     "uvicorn[standard]>=0.54.0",

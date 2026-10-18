@@ -1,17 +1,24 @@
-import { Injectable, computed, inject, signal } from '@angular/core';
-import { Api, Bot, CloudEvent, Msg, SessionInfo, ToolCall } from './api';
+import { Injectable, computed, effect, inject, signal } from '@angular/core';
+import { Api, AuthUser, Bot, CloudEvent, Msg, SessionInfo, ToolCall } from './api';
 
 export interface Streaming {
   text: string;
   tools: ToolCall[];
 }
 
-export type View = { kind: 'session'; id: string } | { kind: 'tools' };
+export type View = { kind: 'session'; id: string } | { kind: 'tools' } | { kind: 'admin' };
+
+const TUTORIAL_KEY = 'tutorial-step';
 
 @Injectable({ providedIn: 'root' })
 export class Store {
   private api = inject(Api);
+  private es?: EventSource;
 
+  /** undefined while checking the cookie, null when logged out. */
+  readonly user = signal<AuthUser | null | undefined>(undefined);
+  readonly canRegister = signal(false);
+  readonly sso = signal<string | null>(null);
   readonly sessions = signal<SessionInfo[]>([]);
   readonly bots = signal<Bot[]>([]);
   readonly view = signal<View>({ kind: 'session', id: 'main' });
@@ -20,7 +27,17 @@ export class Store {
   /** Live tool activity of background runs, per bot. */
   readonly runActivity = signal<Record<string, ToolCall[]>>({});
   readonly error = signal<string | null>(null);
+  /** Heads-up banner, e.g. "bot X updated itself"; click opens the bot. */
+  readonly notice = signal<{ text: string; sessionId: string } | null>(null);
+  /** Tutorial mode: the current step, or null when off (kept across reloads). */
+  readonly tutorial = signal<number | null>(localStorage.getItem(TUTORIAL_KEY) === null ? null : Number(localStorage.getItem(TUTORIAL_KEY)));
+  /** The trace shown in the trace overlay (from a chat message or the admin page). */
+  readonly traceId = signal<string | null>(null);
+  /** External trace UI (TRACE_UI_URL, optional), known once an admin has loaded the admin overview. */
+  readonly traceUi = signal<string | null>(null);
 
+  /** Each user has their own main session (`main-<user>`). */
+  readonly mainId = computed(() => this.sessions().find((s) => s.kind === 'main')?.id ?? 'main');
   readonly currentSession = computed(() => {
     const v = this.view();
     return v.kind === 'session' ? this.sessions().find((s) => s.id === v.id) : undefined;
@@ -30,12 +47,60 @@ export class Store {
     return s?.bot_name ? this.bots().find((b) => b.name === s.bot_name) : undefined;
   });
 
+  constructor() {
+    effect(() => {
+      const step = this.tutorial();
+      if (step === null) localStorage.removeItem(TUTORIAL_KEY);
+      else localStorage.setItem(TUTORIAL_KEY, String(step));
+    });
+  }
+
   async init() {
+    this.api.onUnauthorized = () => this.loggedOut();
+    try {
+      const status = await this.api.authStatus();
+      this.canRegister.set(status.can_register);
+      this.sso.set(status.oidc);
+      this.user.set(status.user);
+      if (status.user) await this.start();
+    } catch (e) {
+      this.user.set(null);
+      this.error.set(`Backend unreachable: ${(e as Error).message}`);
+    }
+  }
+
+  async login(username: string, password: string, register: boolean) {
+    this.user.set(await this.api.login(username, password, register));
+    this.canRegister.set(false);
+    await this.start();
+  }
+
+  async logout() {
+    await this.api.logout().catch(() => undefined);
+    this.loggedOut();
+    this.canRegister.set((await this.api.authStatus().catch(() => null))?.can_register ?? false);
+  }
+
+  private async start() {
     await this.refresh();
-    this.api.events((e) => this.onEvent(e));
+    this.es?.close();
+    this.es = this.api.events((e) => this.onEvent(e));
     const hash = location.hash.slice(1);
     const known = this.sessions().some((s) => s.id === hash);
-    await this.open(hash === 'tools' ? { kind: 'tools' } : { kind: 'session', id: known ? hash : 'main' });
+    const page = hash === 'tools' || (hash === 'admin' && this.user()?.role === 'admin') ? hash : null;
+    await this.open(page ? { kind: page } : { kind: 'session', id: known ? hash : this.mainId() });
+  }
+
+  private loggedOut() {
+    this.es?.close();
+    this.es = undefined;
+    this.user.set(null);
+    this.sessions.set([]);
+    this.bots.set([]);
+    this.messages.set({});
+    this.error.set(null);
+    this.traceId.set(null);
+    this.notice.set(null);
   }
 
   async refresh() {
@@ -51,7 +116,7 @@ export class Store {
 
   async open(view: View) {
     this.view.set(view);
-    history.replaceState(null, '', '#' + (view.kind === 'tools' ? 'tools' : view.id));
+    history.replaceState(null, '', '#' + (view.kind === 'session' ? view.id : view.kind));
     if (view.kind === 'session') await this.loadMessages(view.id);
   }
 
@@ -105,7 +170,7 @@ export class Store {
   async deleteBot(name: string) {
     await this.api.deleteBot(name);
     await this.refresh();
-    await this.open({ kind: 'session', id: 'main' });
+    await this.open({ kind: 'session', id: this.mainId() });
   }
 
   async clear(sid: string) {
@@ -124,6 +189,12 @@ export class Store {
         return { ...a, [bot]: exists ? list.map((t) => (t.id === call.id ? { ...t, ...call } : t)) : [...list, call] };
       });
       return;
+    }
+    const notice = (e.data as { notice?: Msg } | null)?.notice;
+    if (type === 'bot.updated' && notice) {
+      const sid = `bot-${bot}`;
+      if (this.messages()[sid]) this.append(sid, notice);
+      this.notice.set({ text: notice.content, sessionId: sid });
     }
     if (type === 'run.finished') {
       this.runActivity.update((a) => ({ ...a, [bot]: [] }));

@@ -1,26 +1,78 @@
 # yaml-language-server: $schema=https://agentgateway.dev/schema/config
 #
-# agentgateway: the single tools registry / MCP gateway for all bots.
-# Every target below is multiplexed behind http://localhost:3000/mcp and its tools are
-# prefixed with "<target name>_" (e.g. hackernews_hn_top_stories).
+# agentgateway: the single entry point for tools (MCP) and agents (A2A).
+# - MCP: every target below is multiplexed behind http://localhost:3000/mcp and its tools are
+#   prefixed with "<target name>_" (e.g. hackernews_hn_top_stories).
+# - A2A: each bot is an A2A agent at http://localhost:3000/a2a/<bot>/
+#   (Agent Card: /a2a/<bot>/.well-known/agent-card.json), proxied to the backend.
 #
-# Adding a connector = adding a target. Note: one failing target fails `initialize`
-# for the whole multiplexed backend, so keep targets healthy (or comment them out).
-mcp:
-  port: 3000
+# Adding a connector = adding a target. `failureMode: failOpen` keeps the other targets
+# serving when one is down or rejects the caller (e.g. `apps` for a user without a token).
+#
+# Identity: every request needs a JWT signed by the backend (app/tokens.py, `make jwt-init`):
+# `sub` = the user whose connections are used (the bot owner, or "shared"). The gateway checks it
+# here, for /mcp and /a2a alike, and overwrites X-User-Id with `sub`, so a client cannot claim
+# another user. External clients get a token with `make token USER_ID=<user>`.
+# Observability: every request is traced and access-logged with the verified user and bot. Chat turns
+# and bot runs start the trace in the backend, so one trace shows the turn, its LLM calls and the tool
+# calls through this gateway (Admin > Traces in the app).
+frontendPolicies:
+  # Spans go to the backend (stored per user and session in the app database), with the
+  # shared token from secrets/trace-ingest.env (`make jwt-init`) so nothing else on the network can add spans.
+  # `make up` (backend on the host via `make dev`) points A2A_BACKEND at host.docker.internal:8000.
+  tracing:
+    host: ${A2A_BACKEND:-backend:8000}
+    protocol: http
+    path: /otlp/v1/traces
+    policies:
+      requestHeaderModifier:
+        set:
+          x-trace-token: ${TRACE_INGEST_TOKEN}
+    randomSampling: true
+    resources:
+      service.name: '"agentgateway"'
+    attributes:
+      user: jwt.sub
+      bot: jwt.bot
+  accessLog:
+    add:
+      user: jwt.sub
+      bot: jwt.bot
+      mcp_tool: mcp.tool.name
+
+gateways:
+  default:
+    port: 3000
+    jwtAuth:
+      mode: strict
+      issuer: agentic-bots
+      audiences: [agentgateway]
+      jwks: { file: /secrets/jwks.json }
+      preserveToken: true  # the backend's /a2a checks the token again (it is also reachable directly)
+    transformations:
+      request:
+        set:
+          x-user-id: jwt.sub
+
+mcp:  # served on the default gateway at /mcp
+  failureMode: failOpen
   policies:
     cors:
       allowOrigins: ["*"]
       allowHeaders: ["*"]
       exposeHeaders: ["Mcp-Session-Id", "Mcp-Protocol-Version"]
-    # Multi-tenancy (next step): validate a per-run JWT and scope tools per bot/tenant.
-    # jwtAuth:
-    #   issuer: agentic-bots
-    #   audiences: [agentgateway]
-    #   jwks: { file: /config/jwks.json }
-    # mcpAuthorization:
-    #   rules:
-    #   - 'mcp.tool.name in jwt.allowed_tools'
+    # Per-bot tools: a bot's token lists its allowed-tools in `tools`, and the gateway hides and
+    # refuses everything else (the app filters too). Tokens without `tools` (the builder's catalog,
+    # `make token`) see all tools the user may use.
+    mcpAuthorization:
+      rules:
+      - '!has(jwt.tools) || (mcp.tool.target + "_" + mcp.tool.name) in jwt.tools'
+    # Per-user request budget: protects connectors and upstream APIs from a looping bot.
+    localRateLimit:
+    - maxTokens: 300
+      tokensPerFill: 300
+      fillInterval: 60s
+      key: jwt.sub
   targets:
   - name: hackernews
     mcp:
@@ -28,7 +80,36 @@ mcp:
   - name: web
     mcp:
       host: http://connectors:8100/web/mcp
+  # SaaS connectors via open-connector (Gmail, GitHub, Slack, ...), as meta-tools:
+  # apps_list_connections, apps_search_actions, apps_get_action_guide, apps_execute_action.
+  # Per user: the gateway picks that user's open-connector runtime token, which only grants the
+  # user's own connections. X-User-Id here is the verified `jwt.sub` (set at the gateway above).
+  # An unknown user gets no token, so open-connector rejects it: no fallback to an unrestricted token.
+  - name: apps
+    mcp:
+      host: http://open-connector:3000/mcp
+    policies:
+      transformations:  # v1.6.0: backendAuth takes only static keys, so set the header with CEL
+        request:
+          set:
+            authorization: '"Bearer " + ${OOMOL_USER_TOKENS}[request.headers["x-user-id"]]'
   # Third-party servers plug in the same way, e.g.:
   # - name: github
   #   mcp:
   #     host: https://api.githubcopilot.com/mcp/
+
+routes:
+# Bots as A2A agents. Needs the backend container (`make up-all`); with `make dev` the backend
+# runs on the host, so point the backend at host.docker.internal:8000 instead.
+- name: a2a
+  matches:
+  - path: { pathPrefix: /a2a/ }
+  policies:
+    a2a: {}  # A2A-aware proxying (Agent Card URL rewrite, A2A metrics/logs); JWT checked at the gateway
+    localRateLimit:  # each A2A message starts a bot run (LLM cost): keep the budget small
+    - maxTokens: 30
+      tokensPerFill: 30
+      fillInterval: 60s
+      key: jwt.sub
+  backends:
+  - host: ${A2A_BACKEND:-backend:8000}

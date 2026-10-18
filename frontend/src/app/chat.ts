@@ -18,10 +18,15 @@ import { ToolChip } from './tool-chip';
               @for (t of m.tool_calls; track t.id) { <app-tool-chip [call]="t" /> }
             </div>
           }
-          @if (m.role === 'user') {
+          @if (m.role === 'notice') {
+            <div class="bubble md notice" [innerHTML]="m.content | markdown"></div>
+          } @else if (m.role === 'user') {
             <div class="bubble">{{ m.content }}</div>
           } @else {
             <div class="bubble md" [innerHTML]="m.content | markdown"></div>
+            @if (m.trace_id) {
+              <button class="link trace-link" (click)="store.traceId.set(m.trace_id)" title="LLM calls, tools and gateway requests of this answer">trace</button>
+            }
           }
         </div>
       } @empty {
@@ -50,7 +55,7 @@ import { ToolChip } from './tool-chip';
   `,
 })
 export class Chat {
-  private store = inject(Store);
+  protected store = inject(Store);
   sessionId = input.required<string>();
   placeholder = input('Message…');
 
