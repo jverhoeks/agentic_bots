@@ -49,11 +49,14 @@ make dev                  # backend :8000 + frontend :4200
 2. Create your account. The first account registers itself and is the admin.
 3. Ask **Main** for a bot.
 
-New here? Click **Tutorial** in the sidebar. It walks you through the whole loop:
-1. It builds a small bot, `tutorial-hn`, that lists the top AI stories on Hacker News.
-2. It runs the bot and asks a follow-up question.
-3. It changes the bot from its chat and puts it on a schedule.
-4. It shows the traces.
+New here? Click **Tutorial** in the sidebar and pick one:
+
+- **Your first bot** walks you through the whole loop:
+  1. It builds a small bot, `tutorial-hn`, that lists the top AI stories on Hacker News.
+  2. It runs the bot and asks a follow-up question.
+  3. It changes the bot from its chat and puts it on a schedule.
+  4. It shows the traces.
+- **A team of bots** builds a chief of staff, `team-chief`, that hands work to two specialists (`team-hn-scout`, `team-web-scout`) over [A2A](#agent-to-agent-a2a), runs them in parallel and merges their results. It ends with ideas for other teams: a research desk with a fact-checker, a release manager, a competitor watch, a helpdesk router and a second opinion from two models.
 
 Each step has a button that does it for you.
 

@@ -8,7 +8,18 @@ export interface Streaming {
 
 export type View = { kind: 'session'; id: string } | { kind: 'tools' } | { kind: 'connections' } | { kind: 'admin' };
 
-const TUTORIAL_KEY = 'tutorial-step';
+const TUTORIAL_KEY = 'tutorial';
+
+/** Which tutorial is open (null: the picker) and its step. */
+export interface TutorialState { id: string | null; step: number }
+
+function savedTutorial(): TutorialState | null {
+  try {
+    return JSON.parse(localStorage.getItem(TUTORIAL_KEY) ?? 'null');
+  } catch {
+    return null;
+  }
+}
 
 @Injectable({ providedIn: 'root' })
 export class Store {
@@ -29,8 +40,8 @@ export class Store {
   readonly error = signal<string | null>(null);
   /** Heads-up banner, e.g. "bot X updated itself"; click opens the bot. */
   readonly notice = signal<{ text: string; sessionId: string } | null>(null);
-  /** Tutorial mode: the current step, or null when off (kept across reloads). */
-  readonly tutorial = signal<number | null>(localStorage.getItem(TUTORIAL_KEY) === null ? null : Number(localStorage.getItem(TUTORIAL_KEY)));
+  /** Tutorial mode: the open tutorial and step, or null when off (kept across reloads). */
+  readonly tutorial = signal<TutorialState | null>(savedTutorial());
   /** The trace shown in the trace overlay (from a chat message or the admin page). */
   readonly traceId = signal<string | null>(null);
   /** External trace UI (TRACE_UI_URL, optional), known once an admin has loaded the admin overview. */
@@ -49,9 +60,9 @@ export class Store {
 
   constructor() {
     effect(() => {
-      const step = this.tutorial();
-      if (step === null) localStorage.removeItem(TUTORIAL_KEY);
-      else localStorage.setItem(TUTORIAL_KEY, String(step));
+      const t = this.tutorial();
+      if (t === null) localStorage.removeItem(TUTORIAL_KEY);
+      else localStorage.setItem(TUTORIAL_KEY, JSON.stringify(t));
     });
   }
 

@@ -214,3 +214,5 @@ app-admin-page { display: flex; flex-direction: column; min-height: 0; flex: 1; 
 .tutorial .md { line-height: 1.5; color: var(--text); font-size: 13px; }
 .tutorial .md p { margin: 0 0 8px; }
 .tutorial footer { margin-top: 10px; }
+.tutorial-pick { border-top: 1px solid var(--border); padding: 8px 0 10px; }
+.tutorial-pick p { margin: 0 0 8px; color: var(--muted); font-size: 13px; line-height: 1.4; }

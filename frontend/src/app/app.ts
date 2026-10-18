@@ -42,12 +42,12 @@ import { ago } from './util';
                   [title]="'Run ' + bot.title + ' now'" (click)="store.runBot(bot.name)">▶</button>
         </div>
       } @empty {
-        <p class="hint">No bots yet. Ask Main to create one, or <button class="link" (click)="store.tutorial.set(0)">take the tutorial</button>.</p>
+        <p class="hint">No bots yet. Ask Main to create one, or <button class="link" (click)="store.tutorial.set({ id: 'basics', step: 0 })">take the tutorial</button>.</p>
       }
 
       <div class="spacer"></div>
-      <button class="nav" [class.active]="store.tutorial() !== null" (click)="store.tutorial.set(store.tutorial() === null ? 0 : null)">
-        <span class="nav-icon">?</span><span class="nav-text"><b>Tutorial</b><small>See how it works, step by step</small></span>
+      <button class="nav" [class.active]="store.tutorial() !== null" (click)="store.tutorial.set(store.tutorial() === null ? { id: null, step: 0 } : null)">
+        <span class="nav-icon">?</span><span class="nav-text"><b>Tutorial</b><small>Step-by-step guides</small></span>
       </button>
       <button class="nav" [class.active]="store.view().kind === 'tools'" (click)="store.open({ kind: 'tools' })">
         <span class="nav-icon">⚙</span><span class="nav-text"><b>Tools</b><small>MCP gateway catalog</small></span>
