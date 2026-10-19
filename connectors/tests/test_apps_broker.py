@@ -1,5 +1,6 @@
 """apps broker against a fake open-connector: identity, per-user connections and runtime tokens, MCP."""
 
+import asyncio
 import json
 import time
 
@@ -162,3 +163,18 @@ def test_mcp_forwards_with_the_users_token_or_serves_no_tools(oc):
     probe = c.post("/mcp", json={"jsonrpc": "2.0", "id": 2, "method": "server/discover"}, headers=gw)
     assert probe.status_code == 200 and probe.json()["error"]["code"] == -32601
     assert oc.mcp_auth == ["Bearer secret-t1"]
+
+    # the session's GET stream and DELETE are answered here too, not with 405, and only with a valid token
+    assert c.get("/mcp").status_code == 401
+    assert c.delete("/mcp", headers=gw).status_code == 200
+
+
+def test_the_get_stream_stays_open_and_quiet():
+    async def first():
+        stream = b._idle_stream()
+        try:
+            return await anext(stream)
+        finally:
+            await stream.aclose()
+
+    assert asyncio.run(first()) == b": keep-alive\n\n"  # an SSE comment: clients ignore it

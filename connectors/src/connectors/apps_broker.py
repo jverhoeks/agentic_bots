@@ -225,13 +225,28 @@ def _local_reply(msg: dict) -> dict | None:
     return {"jsonrpc": "2.0", "id": msg["id"], "result": result}
 
 
+KEEPALIVE = 25  # seconds between SSE comments on the idle GET stream
+
+
+async def _idle_stream():
+    """The server-to-client stream of MCP: open-connector sends nothing on it, so keep it open and quiet."""
+    while True:
+        yield b": keep-alive\n\n"
+        await asyncio.sleep(KEEPALIVE)
+
+
 async def mcp(request: Request) -> Response:
-    if request.method != "POST":  # open-connector is stateless: no SSE stream, no sessions
-        return Response(status_code=405, headers={"allow": "POST"})
     try:
         user = user_of(request, "agentgateway")
     except Denied as e:
         return JSONResponse({"error": str(e)}, status_code=401)
+    # open-connector is stateless. Answer GET (the notification stream) and DELETE (end of session) like
+    # the other targets do, instead of with 405, which the gateway reports as an upstream error.
+    if request.method == "GET":
+        return StreamingResponse(_idle_stream(), media_type="text/event-stream",
+                                 headers={"cache-control": "no-cache, no-transform", "x-accel-buffering": "no"})
+    if request.method == "DELETE":
+        return Response(status_code=200)
     body = await request.body()
     try:
         msg = json.loads(body)
